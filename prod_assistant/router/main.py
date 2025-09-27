@@ -6,8 +6,12 @@ from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import HumanMessage
+from prod_assistant.workflow.agentic_workflow_with_mcp_websearch import AgenticRAG
 
-from prod_assistant.workflow.agentic_rag_workflow import AgenticRAG
+
+app = FastAPI()
+app.mount("/static", StaticFiles(directory="static"), name="static")
+templates = Jinja2Templates(directory="templates")
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")

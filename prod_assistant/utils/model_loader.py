@@ -4,7 +4,9 @@ import json
 from dotenv import load_dotenv
 from prod_assistant.utils.config_loader import load_config
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 from langchain_groq import ChatGroq
+from tavily import TavilyClient
 from prod_assistant.logger import GLOBAL_LOGGER as log
 from prod_assistant.exception.custom_exception import ProductAssistantException
 import asyncio
@@ -50,6 +52,35 @@ class ApiKeyManager:
             raise KeyError(f"API key for {key} is missing")
         return val
 
+class TavilyClientManager:
+    def __init__(self):
+        api_key = os.getenv("TAVILY_API_KEY")
+        if not api_key:
+            log.error("TAVILY_API_KEY is missing")
+            raise ProductAssistantException("Missing TAVILY_API_KEY", sys)
+        self.client = TavilyClient(api_key=api_key)
+        log.info("Tavily client initialized")
+
+    def get_client(self) -> TavilyClient:
+        return self.client
+    
+    def search(self, query: str, max_results: int = 5) -> dict:
+        """
+        Perform a search query using Tavily API.
+
+        Args:
+            query (str): The search text
+            max_results (int): Number of results to return
+
+        Returns:
+            dict: Search results
+        """
+        try:
+            results = self.client.search(query=query, max_results=max_results)
+            return results
+        except Exception as e:
+            log.error(f"Tavily search failed: {str(e)}")
+            raise ProductAssistantException("Search failed", sys)
 
 class ModelLoader:
     """
@@ -126,13 +157,13 @@ class ModelLoader:
                 temperature=temperature,
             )
 
-        # elif provider == "openai":
-        #     return ChatOpenAI(
-        #         model=model_name,
-        #         api_key=self.api_key_mgr.get("OPENAI_API_KEY"),
-        #         temperature=temperature,
-        #         max_tokens=max_tokens
-        #     )
+        elif provider == "openai":
+            return ChatOpenAI(
+                model=model_name,
+                api_key=self.api_key_mgr.get("OPENAI_API_KEY"),
+                temperature=temperature,
+                
+            )
 
         else:
             log.error("Unsupported LLM provider", provider=provider)
@@ -153,3 +184,8 @@ if __name__ == "__main__":
     print(f"LLM Loaded: {llm}")
     result = llm.invoke("Hello, how are you?")
     print(f"LLM Result: {result.content}")
+
+    query = "What is the capital of France?"
+    tavily_mgr = TavilyClientManager()
+    results = tavily_mgr.search(query)
+    print(results)
