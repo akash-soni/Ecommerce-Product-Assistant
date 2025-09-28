@@ -5,10 +5,11 @@ from langchain_core.output_parsers import StrOutputParser
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 
-from prod_assistant.prompt_library.prompts import PROMPT_REGISTRY, PromptType
+from prod_assistant.prompt_library.prompts import PROMPT_REGISTRY,PromptType
 from prod_assistant.retriever.retrieval import Retriever
 from prod_assistant.utils.model_loader import ModelLoader
 from langgraph.checkpoint.memory import MemorySaver
+import asyncio
 from prod_assistant.evaluation.ragas_eval import evaluate_context_precision, evaluate_response_relevancy
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
@@ -29,23 +30,25 @@ class AgenticRAG:
         self.mcp_client = MultiServerMCPClient({
             "hybrid_search": {
                 "command": "python",
-                "args": ["prod_assistant/mcp_server/product_search_server.py"],
+                "args": ["prod_assistant/mcp_server/product_search_server.py"],  # server with retriever+websearch
                 "transport": "stdio"
             }
         })
-        self.mcp_tools = None  # tools will be initialized asynchronously
+        # Load MCP tools
 
-        # Build workflow
+        self.mcp_tools = None
+
+        async def init_tools(self):
+            self.mcp_tools = await self.mcp_client.get_tools()
+            
+        #self.mcp_tools = asyncio.run(self.mcp_client.get_tools())
+
         self.workflow = self._build_workflow()
         self.app = self.workflow.compile(checkpointer=self.checkpointer)
 
-    # ---------- Async tool initialization ----------
-    async def init_tools(self):
-        """Load MCP tools asynchronously."""
-        self.mcp_tools = await self.mcp_client.get_tools()
-
     # ---------- Nodes ----------
     def _ai_assistant(self, state: AgentState):
+        print("--- CALL ASSISTANT ---")
         messages = state["messages"]
         last_message = messages[-1].content
 
@@ -59,26 +62,30 @@ class AgenticRAG:
             response = chain.invoke({"question": last_message})
             return {"messages": [HumanMessage(content=response)]}
 
-    async def _vector_retriever(self, state: AgentState):
+    def _vector_retriever(self, state: AgentState):
+        print("--- RETRIEVER (MCP) ---")
         query = state["messages"][-1].content
         tool = next(t for t in self.mcp_tools if t.name == "get_product_info")
-        result = await tool.ainvoke({"query": query})
+        result = asyncio.run(tool.ainvoke({"query": query}))
         context = result if result else "No data"
         return {"messages": [HumanMessage(content=context)]}
 
-    async def _web_search(self, state: AgentState):
+    def _web_search(self, state: AgentState):
+        print("--- WEB SEARCH (MCP) ---")
         query = state["messages"][-1].content
         tool = next(t for t in self.mcp_tools if t.name == "web_search")
-        result = await tool.ainvoke({"query": query})
+        result = asyncio.run(tool.ainvoke({"query": query}))
         context = result if result else "No data from web"
         return {"messages": [HumanMessage(content=context)]}
 
     def _grade_documents(self, state: AgentState) -> Literal["generator", "rewriter"]:
+        print("--- GRADER ---")
         question = state["messages"][0].content
         docs = state["messages"][-1].content
 
         prompt = PromptTemplate(
-            template="""You are a grader. Question: {question}\nDocs: {docs}\nAre docs relevant to the question? Answer yes or no.""",
+            template="""You are a grader. Question: {question}\nDocs: {docs}\n
+            Are docs relevant to the question? Answer yes or no.""",
             input_variables=["question", "docs"],
         )
         chain = prompt | self.llm | StrOutputParser()
@@ -86,6 +93,7 @@ class AgenticRAG:
         return "generator" if "yes" in score.lower() else "rewriter"
 
     def _generate(self, state: AgentState):
+        print("--- GENERATE ---")
         question = state["messages"][0].content
         docs = state["messages"][-1].content
         prompt = ChatPromptTemplate.from_template(
@@ -96,6 +104,7 @@ class AgenticRAG:
         return {"messages": [HumanMessage(content=response)]}
 
     def _rewrite(self, state: AgentState):
+        print("--- REWRITE ---")
         question = state["messages"][0].content
         prompt = ChatPromptTemplate.from_template(
             "Rewrite this user query to make it more clear and specific for a search engine. "
@@ -104,6 +113,7 @@ class AgenticRAG:
         chain = prompt | self.llm | StrOutputParser()
         new_q = chain.invoke({"question": question})
         return {"messages": [HumanMessage(content=new_q.strip())]}
+
 
     # ---------- Build Workflow ----------
     def _build_workflow(self):
@@ -117,40 +127,43 @@ class AgenticRAG:
         workflow.add_edge(START, "Assistant")
         workflow.add_conditional_edges(
             "Assistant",
+            
+            
             lambda state: "Retriever" if "TOOL" in state["messages"][-1].content else END,
-            {"Retriever": "Retriever", END: END},
+            
+            {
+                "Retriever": "Retriever", 
+                 END: END
+             },
         )
         workflow.add_conditional_edges(
+            
             "Retriever",
+            
             self._grade_documents,
-            {"generator": "Generator", "rewriter": "Rewriter"},
+            
+            {"generator": "Generator", 
+             
+             "rewriter": "Rewriter"},
         )
         workflow.add_edge("Generator", END)
+        
         workflow.add_edge("Rewriter", "WebSearch")
+        
         workflow.add_edge("WebSearch", "Generator")
-
+        
         return workflow
 
     # ---------- Public Run ----------
-    async def run(self, query: str, thread_id: str = "default_thread") -> str:
+    def run(self, query: str, thread_id: str = "default_thread") -> str:
         """Run the workflow for a given query and return the final answer."""
-        if self.mcp_tools is None:
-            await self.init_tools()  # ensure tools are loaded
-
-        result = await self.app.ainvoke(
-            {"messages": [HumanMessage(content=query)]},
-            config={"configurable": {"thread_id": thread_id}}
-        )
+        result = self.app.invoke({"messages": [HumanMessage(content=query)]},
+                                 config={"configurable": {"thread_id": thread_id}})
         return result["messages"][-1].content
 
 
-# ---------- Example Usage ----------
 if __name__ == "__main__":
-    import asyncio
-
-    async def main():
-        rag_agent = AgenticRAG()
-        answer = await rag_agent.run("Suggest me some good budget phones under 1,00,000 INR?")
-        print("\nFinal Answer:\n", answer)
-
-    asyncio.run(main())
+    rag_agent = AgenticRAG()
+    #answer = rag_agent.run("What is the price of iPhone 16?")
+    answer = rag_agent.run("suggest me some good budget phones under 1,00,000 INR?")
+    print("\nFinal Answer:\n", answer)

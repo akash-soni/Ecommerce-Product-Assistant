@@ -20,6 +20,8 @@ def format_docs(docs) -> str:
         return ""
     formatted_chunks = []
     for d in docs:
+        if isinstance(d, tuple):
+            d = d[0]
         meta = d.metadata or {}
         formatted = (
             f"Title: {meta.get('product_title', 'N/A')}\n"
