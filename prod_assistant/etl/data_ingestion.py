@@ -84,6 +84,7 @@ class DataIngestion:
                     "total_reviews": entry["total_reviews"],
                     "price": entry["price"]
             }
+            # document object with review text and metadata
             doc = Document(page_content=entry["top_reviews"], metadata=metadata)
             documents.append(doc)
 

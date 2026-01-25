@@ -4,9 +4,10 @@ import re
 import os
 from bs4 import BeautifulSoup
 import undetected_chromedriver as uc 
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver.common.by import By  # Import By for element selection
+from selenium.webdriver.common.keys import Keys # for automatic scrolling
+from selenium.webdriver.common.action_chains import ActionChains # 
+from selenium.common.exceptions import NoSuchElementException
 
 
 class FlipkartScrapper:
@@ -16,7 +17,7 @@ class FlipkartScrapper:
         self.output_dir = output_dir
         os.makedirs(self.output_dir, exist_ok=True)
 
-    def get_top_reviews(self,product_url,count=2):
+    def get_top_reviews(self, product_url, count=2):
         """Get the top reviews for a product.
         """
         options = uc.ChromeOptions()
@@ -42,12 +43,16 @@ class FlipkartScrapper:
                 time.sleep(1.5)
 
             soup = BeautifulSoup(driver.page_source, "html.parser")
-            review_blocks = soup.select("div._27M-vq, div.col.EPCmJX, div._6K-7Co")
+            #review_blocks = soup.select("div._27M-vq, div.col.EPCmJX, div._6K-7Co")
+            review_blocks = soup.select("div.G4PxIA")
             seen = set()
             reviews = []
 
             for block in review_blocks:
                 text = block.get_text(separator=" ", strip=True)
+                
+                text = re.sub(r"\bREAD MORE\b", "", text, flags=re.IGNORECASE).strip()
+
                 if text and text not in seen:
                     reviews.append(text)
                     seen.add(text)
@@ -71,9 +76,17 @@ class FlipkartScrapper:
         time.sleep(4)
 
         try:
-            driver.find_element(By.XPATH, "//button[contains(text(), '✕')]").click()
-        except Exception as e:
-            print(f"Error occurred while closing popup: {e}")
+            close_btn = driver.find_element(
+                By.XPATH, "//button[contains(@class,'_2KpZ6l') or contains(@class,'_30XB9F')]"
+            )
+            close_btn.click()
+        except NoSuchElementException:
+            pass
+
+        # try:
+        #     driver.find_element(By.XPATH, "//button[contains(text(), '✕')]").click()
+        # except Exception as e:
+        #     print(f"Error occurred while closing popup: {e}")
 
         time.sleep(2)
         products = []
@@ -81,13 +94,14 @@ class FlipkartScrapper:
         items = driver.find_elements(By.CSS_SELECTOR, "div[data-id]")[:max_products]
         for item in items:
             try:
-                title = item.find_element(By.CSS_SELECTOR, "div.KzDlHZ").text.strip()
-                price = item.find_element(By.CSS_SELECTOR, "div.Nx9bqj").text.strip()
-                rating = item.find_element(By.CSS_SELECTOR, "div.XQDdHH").text.strip()
-                reviews_text = item.find_element(By.CSS_SELECTOR, "span.Wphh3N").text.strip()
+                title = item.find_element(By.CSS_SELECTOR, "div.RG5Slk").text.strip()
+                price = item.find_element(By.CSS_SELECTOR, "div.hZ3P6w.DeU9vF").text.strip()
+                rating = item.find_element(By.CSS_SELECTOR, "div.MKiFS6").text.strip()
+                reviews_text = item.find_element(By.CSS_SELECTOR, "span.PvbNMB").text.strip()
                 match = re.search(r"\d+(,\d+)?(?=\s+Reviews)", reviews_text)
                 total_reviews = match.group(0) if match else "N/A"
 
+                #print(f"Scraping product: {title}, Price: {price}, Rating: {rating}, Total Reviews: {total_reviews}")
                 link_el = item.find_element(By.CSS_SELECTOR, "a[href*='/p/']")
                 href = link_el.get_attribute("href")
                 product_link = href if href.startswith("http") else "https://www.flipkart.com" + href
@@ -122,3 +136,8 @@ class FlipkartScrapper:
         
 
 
+
+if __name__ == "__main__":
+    scrape = FlipkartScrapper()
+    products = scrape.scrape_flipkart_products('Apple iPhone 16 Plus (Ultramarine, 128 GB)')
+    print(products)
