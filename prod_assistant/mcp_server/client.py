@@ -2,16 +2,24 @@ import asyncio
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 async def main():
-    client = MultiServerMCPClient({
-        "hybrid_search": {   # server name
-            "command": "python",
-            "args": [
-                r"prod_assistant\\mcp_server\\product_search_server.py"
-            ],  # absolute path
-            "transport": "stdio",
-        }
-    })
-
+    # client = MultiServerMCPClient({
+    #     "hybrid_search": {   # server name
+    #         "command": "python",
+    #         "args": [
+    #             r"prod_assistant\\mcp_server\\product_search_server.py"
+    #         ],  # absolute path
+    #         "transport": "stdio",
+    #     }
+    # })
+    client = MultiServerMCPClient(
+            {
+                "hybrid_search": {
+                    "transport": "streamable_http",
+                    "url": "http://localhost:8000/mcp"
+                }
+            }
+        )
+    
     # Discover tools
     tools = await client.get_tools()
     print("Available tools:", [t.name for t in tools])
@@ -23,7 +31,7 @@ async def main():
     # --- Step 1: Try retriever first ---
     #query = "Samsung Galaxy S25 price"
     # query = "iPhone 15"
-    query = "What is the price of iPhone 15?"
+    query = "TOOL: retriever"
     retriever_result = await retriever_tool.ainvoke({"query": query})
     print("\nRetriever Result:\n", retriever_result)
 

@@ -116,7 +116,7 @@ class ModelLoader:
 
             return GoogleGenerativeAIEmbeddings(
                 model=model_name,
-                google_api_key=self.api_key_mgr.get("GOOGLE_API_KEY")  # type: ignore
+                google_api_key=self.api_key_mgr.get("GOOGLE_API_KEY") # type: ignore
             )
         except Exception as e:
             log.error("Error loading embedding model", error=str(e))
@@ -178,6 +178,7 @@ if __name__ == "__main__":
     print(f"Embedding Model Loaded: {embeddings}")
     result = embeddings.embed_query("Hello, how are you?")
     print(f"Embedding Result: {result}")
+    print(f"Length of embedding: {len(result)}")
 
     # Test LLM
     llm = loader.load_llm()

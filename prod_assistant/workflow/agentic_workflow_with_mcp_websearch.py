@@ -4,14 +4,14 @@ from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
+from langgraph.checkpoint.memory import MemorySaver
 
 from prod_assistant.prompt_library.prompts import PROMPT_REGISTRY, PromptType
 from prod_assistant.retriever.retrieval import Retriever
 from prod_assistant.utils.model_loader import ModelLoader
-from langgraph.checkpoint.memory import MemorySaver
 from prod_assistant.evaluation.ragas_eval import evaluate_context_precision, evaluate_response_relevancy
 from langchain_mcp_adapters.client import MultiServerMCPClient
-
+import asyncio
 
 class AgenticRAG:
     """Agentic RAG pipeline using LangGraph + MCP (Retriever + WebSearch)."""
@@ -26,84 +26,197 @@ class AgenticRAG:
         self.checkpointer = MemorySaver()
 
         # MCP Client Init
-        self.mcp_client = MultiServerMCPClient({
-            "hybrid_search": {
-                "command": "python",
-                "args": ["prod_assistant/mcp_server/product_search_server.py"],
-                "transport": "stdio"
+        # self.mcp_client = MultiServerMCPClient({
+        #     "hybrid_search": {
+        #         "command": "python",
+        #         "args":[r"prod_assistant\\mcp_server\\product_search_server.py"],
+        #         "transport": "stdio"
+        #     }
+        # })
+        self.mcp_client = MultiServerMCPClient(
+            {
+                "hybrid_search": {
+                    "transport": "streamable_http",
+                    "url": "http://localhost:8000/mcp"
+                }
             }
-        })
+        )
         self.mcp_tools = None  # tools will be initialized asynchronously
 
         # Build workflow
         self.workflow = self._build_workflow()
         self.app = self.workflow.compile(checkpointer=self.checkpointer)
 
-    # ---------- Async tool initialization ----------
-    async def init_tools(self):
+        # Load MCP tools asynchronously
+        asyncio.run(self._safe_async_init())
+
+    # # ---------- Async tool initialization ----------
+    # async def init_tools(self):
+    #     """Load MCP tools asynchronously."""
+    #     self.mcp_tools = await self.mcp_client.get_tools()
+
+    async def async_init(self):
         """Load MCP tools asynchronously."""
         self.mcp_tools = await self.mcp_client.get_tools()
 
+    async def _safe_async_init(self):
+        """Safe async init wrapper (prevents event loop crash)."""
+        try:
+            self.mcp_tools = await self.mcp_client.get_tools()
+            print("MCP tools loaded successfully.")
+        except Exception as e:
+            print(f"Warning: Failed to load MCP tools — {e}")
+            self.mcp_tools = []
+
+
     # ---------- Nodes ----------
+    # def _ai_assistant(self, state: AgentState):
+    #     messages = state["messages"]
+    #     last_message = messages[-1].content
+
+    #     if any(word in last_message.lower() for word in ["price", "review", "product"]):
+    #         return {"messages": [HumanMessage(content="TOOL: retriever")]}
+    #     else:
+    #         prompt = ChatPromptTemplate.from_template(
+    #             "You are a helpful assistant. Answer the user directly.\n\nQuestion: {question}\nAnswer:"
+    #         )
+    #         chain = prompt | self.llm | StrOutputParser()
+    #         response = chain.invoke({"question": last_message})
+    #         return {"messages": [HumanMessage(content=response)]}
+
     def _ai_assistant(self, state: AgentState):
+        print("--- CALL ASSISTANT ---")
         messages = state["messages"]
         last_message = messages[-1].content
 
-        if any(word in last_message.lower() for word in ["price", "review", "product"]):
+        if any(word in last_message.lower() for word in ["price", "review", "product","phones","mobile","phone"]):
             return {"messages": [HumanMessage(content="TOOL: retriever")]}
         else:
             prompt = ChatPromptTemplate.from_template(
                 "You are a helpful assistant. Answer the user directly.\n\nQuestion: {question}\nAnswer:"
             )
             chain = prompt | self.llm | StrOutputParser()
-            response = chain.invoke({"question": last_message})
+            response = chain.invoke({"question": last_message}) or "I'm not sure about that."
             return {"messages": [HumanMessage(content=response)]}
 
+    # async def _vector_retriever(self, state: AgentState):
+    #     query = state["messages"][-1].content
+    #     tool = next(t for t in self.mcp_tools if t.name == "get_product_info")
+    #     result = await tool.ainvoke({"query": query})
+    #     context = result if result else "No data"
+    #     return {"messages": [HumanMessage(content=context)]}
     async def _vector_retriever(self, state: AgentState):
-        query = state["messages"][-1].content
-        tool = next(t for t in self.mcp_tools if t.name == "get_product_info")
-        result = await tool.ainvoke({"query": query})
-        context = result if result else "No data"
+        print("--- RETRIEVER (MCP) ---")
+        query = state["messages"][0].content
+
+        tool = next((t for t in self.mcp_tools if t.name == "get_product_info"), None)
+        if not tool:
+            return {"messages": [HumanMessage(content="Retriever tool not found in MCP client.")]}
+
+        try:
+            result = await tool.ainvoke({"query": query})
+            context = result or "No relevant product data found."
+        except Exception as e:
+            context = f"Error invoking retriever: {e}"
+
         return {"messages": [HumanMessage(content=context)]}
+    
+    # async def _web_search(self, state: AgentState):
+    #     query = state["messages"][-1].content
+    #     tool = next(t for t in self.mcp_tools if t.name == "web_search")
+    #     result = await tool.ainvoke({"query": query})
+    #     context = result if result else "No data from web"
+    #     return {"messages": [HumanMessage(content=context)]}
 
     async def _web_search(self, state: AgentState):
+        print("--- WEB SEARCH (MCP) ---")
         query = state["messages"][-1].content
         tool = next(t for t in self.mcp_tools if t.name == "web_search")
-        result = await tool.ainvoke({"query": query})
+        result = await tool.ainvoke({"query": query})  # ✅
         context = result if result else "No data from web"
         return {"messages": [HumanMessage(content=context)]}
+    
+
+    # def _grade_documents(self, state: AgentState) -> Literal["generator", "rewriter"]:
+    #     question = state["messages"][0].content
+    #     docs = state["messages"][-1].content
+
+    #     prompt = PromptTemplate(
+    #         template="""You are a grader. Question: {question}\nDocs: {docs}\nAre docs relevant to the question? Answer yes or no.""",
+    #         input_variables=["question", "docs"],
+    #     )
+    #     chain = prompt | self.llm | StrOutputParser()
+    #     score = chain.invoke({"question": question, "docs": docs})
+    #     return "generator" if "yes" in score.lower() else "rewriter"
 
     def _grade_documents(self, state: AgentState) -> Literal["generator", "rewriter"]:
+        print("--- GRADER ---")
         question = state["messages"][0].content
         docs = state["messages"][-1].content
 
         prompt = PromptTemplate(
-            template="""You are a grader. Question: {question}\nDocs: {docs}\nAre docs relevant to the question? Answer yes or no.""",
+            template="""You are a grader. Question: {question}\nDocs: {docs}\n
+            Are docs relevant to the question? Answer yes or no.""",
             input_variables=["question", "docs"],
         )
         chain = prompt | self.llm | StrOutputParser()
-        score = chain.invoke({"question": question, "docs": docs})
+        score = chain.invoke({"question": question, "docs": docs}) or ""
         return "generator" if "yes" in score.lower() else "rewriter"
 
+
+    # def _generate(self, state: AgentState):
+    #     question = state["messages"][0].content
+    #     docs = state["messages"][-1].content
+    #     prompt = ChatPromptTemplate.from_template(
+    #         PROMPT_REGISTRY[PromptType.PRODUCT_BOT].template
+    #     )
+    #     chain = prompt | self.llm | StrOutputParser()
+    #     response = chain.invoke({"context": docs, "question": question})
+    #     return {"messages": [HumanMessage(content=response)]}
+
     def _generate(self, state: AgentState):
+        print("--- GENERATE ---")
         question = state["messages"][0].content
         docs = state["messages"][-1].content
+
         prompt = ChatPromptTemplate.from_template(
             PROMPT_REGISTRY[PromptType.PRODUCT_BOT].template
         )
         chain = prompt | self.llm | StrOutputParser()
-        response = chain.invoke({"context": docs, "question": question})
+
+        try:
+            response = chain.invoke({"context": docs, "question": question}) or "No response generated."
+        except Exception as e:
+            response = f"Error generating response: {e}"
+
         return {"messages": [HumanMessage(content=response)]}
 
+    # def _rewrite(self, state: AgentState):
+    #     question = state["messages"][0].content
+    #     prompt = ChatPromptTemplate.from_template(
+    #         "Rewrite this user query to make it more clear and specific for a search engine. "
+    #         "Do NOT answer the query. Only rewrite it.\n\nQuery: {question}\nRewritten Query:"
+    #     )
+    #     chain = prompt | self.llm | StrOutputParser()
+    #     new_q = chain.invoke({"question": question})
+    #     return {"messages": [HumanMessage(content=new_q.strip())]}
+
     def _rewrite(self, state: AgentState):
+        print("--- REWRITE ---")
         question = state["messages"][0].content
+
         prompt = ChatPromptTemplate.from_template(
             "Rewrite this user query to make it more clear and specific for a search engine. "
             "Do NOT answer the query. Only rewrite it.\n\nQuery: {question}\nRewritten Query:"
         )
         chain = prompt | self.llm | StrOutputParser()
-        new_q = chain.invoke({"question": question})
-        return {"messages": [HumanMessage(content=new_q.strip())]}
+
+        try:
+            new_q = chain.invoke({"question": question}).strip()
+        except Exception as e:
+            new_q = f"Error rewriting query: {e}"
+
+        return {"messages": [HumanMessage(content=new_q)]}
 
     # ---------- Build Workflow ----------
     def _build_workflow(self):
@@ -134,8 +247,8 @@ class AgenticRAG:
     # ---------- Public Run ----------
     async def run(self, query: str, thread_id: str = "default_thread") -> str:
         """Run the workflow for a given query and return the final answer."""
-        if self.mcp_tools is None:
-            await self.init_tools()  # ensure tools are loaded
+        # if self.mcp_tools is None:
+        #     await self.init_tools()  # ensure tools are loaded
 
         result = await self.app.ainvoke(
             {"messages": [HumanMessage(content=query)]},
@@ -150,7 +263,7 @@ if __name__ == "__main__":
 
     async def main():
         rag_agent = AgenticRAG()
-        answer = await rag_agent.run("Suggest me some good budget phones under 1,00,000 INR?")
+        answer = await rag_agent.run("suggest me some mobile phones under 50000 INR?")
         print("\nFinal Answer:\n", answer)
 
     asyncio.run(main())
