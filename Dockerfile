@@ -18,4 +18,4 @@ COPY . .
 
 EXPOSE 8000
 # CMD ["bash", "-c", "python prod_assistant/mcp_server/product_search_server.py & uvicorn prod_assistant.router.main:app --host 0.0.0.0 --port 8000 --workers 2"]
-CMD ["bash", "-c", "python -m prod_assistant.mcp_server.product_search_server & uvicorn prod_assistant.router.main:app --host 0.0.0.0 --port 8000 --workers 2"]
+CMD ["bash", "-c", "python -m prod_assistant.mcp_server.product_search_server & uvicorn prod_assistant.router.main:app --host 0.0.0.0 --port 8001 --workers 2"]

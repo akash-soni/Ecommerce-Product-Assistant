@@ -37,7 +37,7 @@ class AgenticRAG:
             {
                 "hybrid_search": {
                     "transport": "streamable_http",
-                    "url": "http://localhost:8000/mcp"
+                    "url": "http://localhost:9000/mcp"
                 }
             }
         )

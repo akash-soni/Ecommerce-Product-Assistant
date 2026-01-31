@@ -5,7 +5,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from langchain_core.messages import HumanMessage
+#from langchaincore.messages import HumanMessage
 from prod_assistant.workflow.agentic_workflow_with_mcp_websearch import AgenticRAG
 
 

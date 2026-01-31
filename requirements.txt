@@ -18,7 +18,9 @@ structlog==25.4.0
 langgraph==0.6.7
 tavily-python
 ragas
-
-langchain-mcp-adapters
-mcp
-ddgs # duckduckgo search
+ # duckduckgo search
+ragas==0.3.4
+langchain-mcp-adapters==0.1.10
+mcp==1.14.0
+ddgs==9.6.0
+langchain-openai==0.3.32
