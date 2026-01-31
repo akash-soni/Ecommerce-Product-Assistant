@@ -123,9 +123,14 @@ pip install -r requirements.txt
 
 ```
 GROQ_API_KEY=
+GOOGLE_API_KEY=
+ASTRA_DB_KEYSPACE=
+TAVILY_API_KEY=
 OPENAI_API_KEY=
-ASTRA_DB_API_ENDPOINT=
 ASTRA_DB_APPLICATION_TOKEN=
+ASTRA_DB_API_ENDPOINT=
+
+
 ```
 
 ---
@@ -163,7 +168,7 @@ Used to measure answer quality and retrieval grounding.
 
 - Conversational memory  
 - Product ranking model  
-- UI dashboard  
+- Integration into full fledge system 
 - Feedback learning  
 
 ---
