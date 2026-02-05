@@ -21,6 +21,6 @@ ragas
  # duckduckgo search
 ragas==0.3.4
 langchain-mcp-adapters==0.1.10
-mcp==1.14.0
+mcp==1.23.0
 ddgs==9.6.0
 langchain-openai==0.3.32
